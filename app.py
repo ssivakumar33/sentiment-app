@@ -7,11 +7,11 @@ from azure.cosmos import CosmosClient
 
 app = Flask(__name__)
 
-# -------- Azure Text Analytics --------
+# ---------------- TEXT ANALYTICS ----------------
 endpoint = os.environ.get("AZURE_ENDPOINT")
 key = os.environ.get("AZURE_KEY")
 
-# -------- Cosmos DB SAFE CONNECTION --------
+# ---------------- COSMOS DB ----------------
 container = None
 
 try:
@@ -20,50 +20,68 @@ try:
     database_name = os.environ.get("COSMOS_DB")
     container_name = os.environ.get("COSMOS_CONTAINER")
 
-    if cosmos_uri and cosmos_key:
+    if all([cosmos_uri, cosmos_key, database_name, container_name]):
         client = CosmosClient(cosmos_uri, cosmos_key)
         database = client.get_database_client(database_name)
         container = database.get_container_client(container_name)
         print("✅ Cosmos DB connected")
 
 except Exception as e:
-    print("❌ Cosmos DB connection failed:", e)
+    print("❌ Cosmos DB connection failed:", str(e))
+    container = None   # VERY IMPORTANT
 
 
+# ---------------- ROUTE ----------------
 @app.route("/", methods=["GET", "POST"])
 def index():
+
     sentiment = None
 
     if request.method == "POST":
-        text = request.form["text"]
 
-        url = endpoint + "/text/analytics/v3.1/sentiment"
+        text = request.form.get("text")
 
-        headers = {
-            "Ocp-Apim-Subscription-Key": key,
-            "Content-Type": "application/json"
-        }
+        try:
+            url = endpoint + "/text/analytics/v3.1/sentiment"
 
-        body = {
-            "documents": [
-                {"id": "1", "language": "en", "text": text}
-            ]
-        }
-
-        response = requests.post(url, headers=headers, json=body)
-        result = response.json()
-
-        sentiment = result["documents"][0]["sentiment"]
-
-        # -------- SAVE TO COSMOS --------
-        if container:
-            item = {
-                "id": str(uuid.uuid4()),
-                "text": text,
-                "sentiment": sentiment,
-                "timestamp": str(datetime.utcnow())
+            headers = {
+                "Ocp-Apim-Subscription-Key": key,
+                "Content-Type": "application/json"
             }
 
-            container.create_item(body=item)
+            body = {
+                "documents": [
+                    {"id": "1", "language": "en", "text": text}
+                ]
+            }
+
+            response = requests.post(url, headers=headers, json=body)
+            result = response.json()
+
+            sentiment = result["documents"][0]["sentiment"]
+
+        except Exception as e:
+            sentiment = "API Error"
+            print("Text Analytics Error:", e)
+
+        # -------- SAVE TO COSMOS SAFELY --------
+        if container and sentiment:
+            try:
+                item = {
+                    "id": str(uuid.uuid4()),
+                    "text": text,
+                    "sentiment": sentiment,
+                    "timestamp": str(datetime.utcnow())
+                }
+
+                container.create_item(body=item)
+
+            except Exception as e:
+                print("Cosmos insert failed:", e)
 
     return render_template("index.html", sentiment=sentiment)
+
+
+# ---------------- AZURE ENTRY ----------------
+if __name__ == "__main__":
+    app.run()
