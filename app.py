@@ -6,26 +6,10 @@ from azure.cosmos import CosmosClient
 
 app = Flask(__name__)
 
-# ==============================
-# Azure Text Analytics Settings
-# ==============================
 endpoint = os.environ.get("AZURE_ENDPOINT")
 key = os.environ.get("AZURE_KEY")
 
-# ==============================
-# Cosmos DB Connection
-# ==============================
-cosmos_uri = os.environ.get("COSMOS_URI")
-cosmos_key = os.environ.get("COSMOS_KEY")
 
-client = CosmosClient(cosmos_uri, credential=cosmos_key)
-database = client.get_database_client("sentimentdb")
-container = database.get_container_client("sentiments")
-
-
-# ==============================
-# Main Route
-# ==============================
 @app.route("/", methods=["GET", "POST"])
 def index():
 
@@ -35,7 +19,9 @@ def index():
 
         text = request.form["text"]
 
+        # -----------------------
         # Azure Sentiment API
+        # -----------------------
         url = endpoint + "/text/analytics/v3.1/sentiment"
 
         headers = {
@@ -45,11 +31,7 @@ def index():
 
         body = {
             "documents": [
-                {
-                    "id": "1",
-                    "language": "en",
-                    "text": text
-                }
+                {"id": "1", "language": "en", "text": text}
             ]
         }
 
@@ -58,18 +40,28 @@ def index():
 
         sentiment = result["documents"][0]["sentiment"]
 
-        # ==============================
-        # Store Result in Cosmos DB
-        # ==============================
-        container.create_item({
-            "id": str(uuid.uuid4()),
-            "text": text,
-            "sentiment": sentiment
-        })
+        # -----------------------
+        # Cosmos DB (SAFE CONNECT)
+        # -----------------------
+        try:
+            cosmos_uri = os.environ.get("COSMOS_URI")
+            cosmos_key = os.environ.get("COSMOS_KEY")
+
+            client = CosmosClient(cosmos_uri, credential=cosmos_key)
+            database = client.get_database_client("sentimentdb")
+            container = database.get_container_client("sentiments")
+
+            container.create_item({
+                "id": str(uuid.uuid4()),
+                "text": text,
+                "sentiment": sentiment
+            })
+
+        except Exception as e:
+            print("Cosmos DB Error:", e)
 
     return render_template("index.html", sentiment=sentiment)
 
 
-# Azure App Service uses Gunicorn
 if __name__ == "__main__":
     app.run()
